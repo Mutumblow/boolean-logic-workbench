@@ -4,13 +4,16 @@ from logic import (
     BooleanLogic,
     _path_intersects_node,
     _wire_route_points,
+    infer_variable_count,
     format_pos,
     format_sop,
     minimize_sop,
     parse_pos,
     parse_sop,
+    parse_sop_cubes,
     expand_cubes,
     truth_table,
+    truth_table_panels,
 )
 
 
@@ -68,6 +71,24 @@ class CanonicalFormTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_pos("(A+B+C)")
 
+    def test_variable_count_is_inferred_from_literals_and_indices(self):
+        self.assertEqual(infer_variable_count("A'B'C'D'E'"), 5)
+        self.assertEqual(infer_variable_count("A'B'C'D'E'F'G'H'"), 8)
+        self.assertEqual(infer_variable_count("Σm(0, 16, 31)"), 5)
+
+    def test_eight_variable_forms_parse_and_round_trip(self):
+        variables = "ABCDEFGH"
+        expression = "A'B'C'D'E'F'G'H' + ABCDEFGH"
+        cubes = parse_sop_cubes(expression, variables)
+        minterms = expand_cubes(cubes)
+        self.assertEqual(minterms, {0, 255})
+        self.assertEqual(expand_cubes(minimize_sop(minterms, 8)), minterms)
+        self.assertEqual(
+            parse_sop(format_sop(minterms, variables), variables),
+            minterms,
+        )
+        self.assertEqual(parse_pos("ΠP(0, 255)", variables), {0, 255})
+
 
 class TruthTableTests(unittest.TestCase):
     def test_rows_and_columns_use_requested_gray_order(self):
@@ -83,6 +104,13 @@ class TruthTableTests(unittest.TestCase):
             [[cell["index"] for cell in row["cells"]] for row in rows],
             [[0, 4, 12, 8], [1, 5, 13, 9], [3, 7, 15, 11], [2, 6, 14, 10]],
         )
+
+    def test_extra_variable_tables_are_sliced_by_fixed_assignment(self):
+        panels = truth_table_panels({0, 1, 31}, 5)
+        self.assertEqual([panel["assignment"] for panel in panels], ["E=0", "E=1"])
+        self.assertEqual(panels[0]["rows"][0]["cells"][0], {"index": 0, "value": 1})
+        self.assertEqual(panels[1]["rows"][0]["cells"][0], {"index": 1, "value": 1})
+        self.assertEqual(panels[1]["rows"][2]["cells"][2], {"index": 31, "value": 1})
 
 
 class ViewModelTests(unittest.TestCase):
@@ -201,6 +229,12 @@ class ViewModelTests(unittest.TestCase):
         self.assertTrue(model.hasResult)
         self.assertEqual(model.sop, previous_sop)
         self.assertTrue(model.error)
+        model.calculate("SOP", "   ")
+        self.assertEqual(model.sop, previous_sop)
+        self.assertIn("Enter a canonical form", model.error)
+        model.calculate("SOP", "Σm(0, 511)")
+        self.assertEqual(model.sop, previous_sop)
+        self.assertIn("supports up to 8 variables", model.error)
 
     def test_table_cells_are_editable_and_update_forms_and_scheme(self):
         model = BooleanLogic()
@@ -230,6 +264,186 @@ class ViewModelTests(unittest.TestCase):
                      for node in model.schemeNodes]
         self.assertEqual(pos_nodes, sop_nodes)
         self.assertEqual(model._minterms, {0, 3})
+
+    def test_multi_output_functions_have_independent_tables_and_scheme(self):
+        model = BooleanLogic()
+        model.calculate("SOP", "A'B'C'D'E'F' + ABCDEF")
+        self.assertEqual(model.variableCount, 6)
+        self.assertEqual(len(model.tablePanels), 4)
+        self.assertEqual(
+            [panel["assignment"] for panel in model.tablePanels],
+            ["E=0, F=0", "E=0, F=1", "E=1, F=0", "E=1, F=1"],
+        )
+
+        model.addOutput("Y0")
+        model.calculate("SOP", "A'B'C'D'EF' + ABCDEF")
+        self.assertEqual(model.variableCount, 6)
+        self.assertEqual(len(model.tablePanels), 8)
+        self.assertEqual(model.activeOutputName, "Y0")
+        self.assertTrue(any(
+            node["label"] == "OR  F" for node in model.schemeNodes
+        ))
+        self.assertTrue(any(
+            node["label"] == "OR  Y0" for node in model.schemeNodes
+        ))
+
+        original_sop = model.sop
+        model.setOutputTableCell("F", 1, 1)
+        self.assertEqual(model.sop, original_sop)
+        model.selectOutput("F")
+        self.assertNotEqual(model.sop, original_sop)
+        self.assertEqual(model.variableCount, 6)
+
+    def test_removing_high_variable_output_shrinks_table_slices(self):
+        model = BooleanLogic()
+        model.calculate("SOP", "A'B'C'D'E'")
+        model.addOutput("Y0")
+        model.calculate("SOP", "A'B'C'D'E'F'G'H'")
+        self.assertEqual(model.variableCount, 8)
+        self.assertEqual(len(model.tablePanels), 32)
+        model.removeActiveOutput()
+        self.assertEqual(model.activeOutputName, "F")
+        self.assertEqual(model.variableCount, 5)
+        self.assertEqual(len(model.tablePanels), 2)
+
+    def test_shorter_output_forms_expand_across_shared_variables(self):
+        model = BooleanLogic()
+        model.calculate("POS", "(A+B+C+D)")
+        model.addOutput("Y0")
+        model.calculate("SOP", "A'B'C'D'E'")
+        self.assertEqual(model.variableCount, 5)
+        expected = {
+            (minterm << 1) | suffix
+            for minterm in range(1, 16)
+            for suffix in (0, 1)
+        }
+        self.assertEqual(model._outputs[0]["minterms"], expected)
+
+    def test_four_to_one_mux_function_uses_six_variables(self):
+        model = BooleanLogic()
+        model.calculate("SOP", "A'B'C + A'BD + AB'E + ABF")
+        self.assertEqual(model.variableCount, 6)
+        self.assertEqual(len(model.tablePanels), 4)
+        self.assertEqual(
+            sum(node["type"] == "AND" for node in model.schemeNodes), 4
+        )
+        self.assertEqual(
+            sum(node["type"] == "OR" for node in model.schemeNodes), 1
+        )
+
+    def test_mux_synthesizer_requires_a_calculated_function(self):
+        model = BooleanLogic()
+        model.generateMultiplexer()
+        self.assertIn("Enter or calculate f", model.error)
+        self.assertFalse(model.hasScheme)
+
+    def test_mux_scheme_decomposes_arbitrary_function(self):
+        model = BooleanLogic()
+        model.calculate(
+            "SOP",
+            "A'B'C'D'+A'B'CD+A'BC'D+AB'CD'+ABC'D'",
+        )
+        expected_minterms = set(model._minterms)
+        model.generateMultiplexer()
+
+        nodes = {node["id"]: node for node in model.schemeNodes}
+        self.assertTrue(model.hasScheme)
+        self.assertTrue(model.hasAnyResult)
+        self.assertIn("decomposition of the selected f", model.schemeDescription)
+        self.assertEqual(sum(node["type"] == "INPUT" for node in nodes.values()), 4)
+        self.assertEqual(sum(node["type"] == "AND" for node in nodes.values()), 9)
+        self.assertEqual(sum(node["type"] == "OR" for node in nodes.values()), 2)
+        self.assertEqual(sum(node["type"] == "NOT" for node in nodes.values()), 5)
+        self.assertEqual(sum(node["type"] == "OUTPUT" for node in nodes.values()), 2)
+
+        branch_sources = {
+            "mux_select_term_I3": {
+                "mux_data_I3_or", "mux_not_A", "mux_not_B",
+            },
+            "mux_select_term_I2": {
+                "mux_data_I2_term_0", "mux_not_A", "mux_var_B",
+            },
+            "mux_select_term_I1": {
+                "mux_data_I1_term_0", "mux_var_A", "mux_not_B",
+            },
+            "mux_select_term_I0": {
+                "mux_data_I0_term_0", "mux_var_A", "mux_var_B",
+            },
+        }
+        for target, expected_sources in branch_sources.items():
+            self.assertEqual({
+                wire["source"] for wire in model.connections
+                if wire["target"] == target
+            }, expected_sources)
+        self.assertEqual({
+            wire["source"] for wire in model.connections
+            if wire["target"] == "mux_output_F"
+        }, {"mux_or"})
+        self.assertEqual({
+            wire["source"] for wire in model.connections
+            if wire["target"] == "mux_not_F"
+        }, {"mux_or"})
+        self.assertEqual({
+            wire["source"] for wire in model.connections
+            if wire["target"] == "mux_output_Fbar"
+        }, {"mux_not_F"})
+
+        def evaluate(node_id, assignment):
+            node = nodes[node_id]
+            if node["type"] == "INPUT":
+                return assignment[node["label"]]
+            if node["type"] == "CONSTANT":
+                return int(node["label"])
+            sources = [
+                wire["source"] for wire in model.connections
+                if wire["target"] == node_id
+            ]
+            values = [evaluate(source, assignment) for source in sources]
+            if node["type"] == "NOT":
+                return 1 - values[0]
+            if node["type"] == "AND":
+                return int(all(values))
+            if node["type"] == "OR":
+                return int(any(values))
+            if node["type"] == "OUTPUT":
+                return values[0]
+            self.fail(f"Unexpected gate type: {node['type']}")
+
+        for index in range(16):
+            assignment = {
+                variable: (index >> (3 - offset)) & 1
+                for offset, variable in enumerate("ABCD")
+            }
+            self.assertEqual(
+                evaluate("mux_output_F", assignment),
+                int(index in expected_minterms),
+            )
+            self.assertEqual(
+                evaluate("mux_output_Fbar", assignment),
+                int(index not in expected_minterms),
+            )
+
+        for wire in model.connections:
+            route = _wire_route_points(
+                wire, nodes[wire["source"]], nodes[wire["target"]]
+            )
+            self.assertFalse(any(
+                _path_intersects_node(route, node)
+                for node in nodes.values()
+                if node["id"] not in (wire["source"], wire["target"])
+            ))
+
+    def test_mux_scheme_supports_constant_functions(self):
+        for constant in ("0", "1"):
+            with self.subTest(constant=constant):
+                model = BooleanLogic()
+                model.calculate("SOP", constant)
+                model.generateMultiplexer()
+                self.assertEqual(
+                    sum(node["type"] == "CONSTANT" for node in model.schemeNodes),
+                    4,
+                )
+                self.assertEqual(len(model.connections), 21)
 
     def test_dragging_updates_node_and_keeps_it_inside_canvas(self):
         model = BooleanLogic()

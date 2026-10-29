@@ -8,16 +8,22 @@ import QtQuick.Layouts
 
 ApplicationWindow {
     id: window
-    width: 1120
-    height: 850
-    minimumWidth: 680
-    minimumHeight: 600
+    width: 1240
+    height: 900
+    minimumWidth: 760
+    minimumHeight: 640
     visible: true
     title: qsTr("Boolean Logic Workbench")
-    color: "#f3f6fb"
+    color: "#f3f6f8"
     Material.theme: Material.Light
-    Material.accent: "#315eaa"
+    Material.accent: "#0f766e"
 
+    readonly property color ink: "#172b3a"
+    readonly property color muted: "#6b7c88"
+    readonly property color accent: "#0f766e"
+    readonly property color accentSoft: "#e5f4f1"
+    readonly property color border: "#e1e9e9"
+    readonly property color surface: "#ffffff"
     property var positions: ({})
     property var backend: logic
     property string connectionSource: ""
@@ -29,7 +35,7 @@ ApplicationWindow {
         var availableHeight = diagramScroll.availableHeight - 32
         if (availableWidth <= 0 || availableHeight <= 0)
             return
-        schemeZoom = Math.max(0.15, Math.min(
+        schemeZoom = Math.max(0.08, Math.min(
             1.0,
             availableWidth / backend.schemeWidth,
             availableHeight / backend.schemeHeight
@@ -42,6 +48,11 @@ ApplicationWindow {
         expressionInput.text = mode === "SOP" ? backend.sop : backend.pos
         expressionInput.forceActiveFocus()
         expressionInput.cursorPosition = expressionInput.length
+    }
+
+    function syncActiveOutput() {
+        inputMode.currentIndex = backend.activeMode === "POS" ? 1 : 0
+        expressionInput.text = backend.activeSource
     }
 
     function refreshPositions() {
@@ -78,31 +89,66 @@ ApplicationWindow {
         spacing: 0
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 64
-            color: "#ffffff"
+            Layout.preferredHeight: 82
+            color: "#102a3a"
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 22
-                anchors.rightMargin: 22
-                spacing: 12
+                anchors.leftMargin: 26
+                anchors.rightMargin: 26
+                spacing: 14
+                Rectangle {
+                    Layout.preferredWidth: 44
+                    Layout.preferredHeight: 44
+                    radius: 13
+                    color: "#14a895"
+                    Label {
+                        anchors.centerIn: parent
+                        text: "B"
+                        color: "#ffffff"
+                        font.pixelSize: 24
+                        font.bold: true
+                    }
+                }
                 ColumnLayout {
-                    spacing: 2
+                    spacing: 3
                     Label {
                         text: qsTr("Boolean Logic Workbench")
-                        font.pixelSize: 20
+                        font.pixelSize: 21
                         font.bold: true
-                        color: "#17233b"
+                        color: "#f4fbfa"
                     }
                     Label {
-                        text: qsTr("Four-variable canonical forms, truth table and gate scheme")
+                        text: qsTr("Explore · simplify · design")
                         font.pixelSize: 12
-                        color: "#63718a"
+                        color: "#b7cacd"
                     }
                 }
                 Item { Layout.fillWidth: true }
+                Label {
+                    text: qsTr("%1 VARIABLES").arg(window.backend.variableCount)
+                    color: "#c8e9e3"
+                    font.pixelSize: 10
+                    font.bold: true
+                    padding: 9
+                    background: Rectangle {
+                        color: "#214454"
+                        radius: 12
+                    }
+                }
                 Button {
                     text: qsTr("Export PDF")
-                    enabled: window.backend.hasResult
+                    enabled: window.backend.hasScheme
+                    contentItem: Label {
+                        text: qsTr("Export PDF")
+                        color: "#ffffff"
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 10
+                        color: parent.enabled ? "#14a895" : "#37515c"
+                    }
                     onClicked: pdfDialog.open()
                 }
             }
@@ -111,13 +157,81 @@ ApplicationWindow {
             id: tabs
             objectName: "mainTabs"
             Layout.fillWidth: true
+            Layout.preferredHeight: 62
+            spacing: 8
+            leftPadding: 20
+            rightPadding: 20
+            background: Rectangle {
+                color: "#eaf0f1"
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: 1
+                    color: "#dce5e6"
+                }
+            }
             onCurrentIndexChanged: {
                 if (currentIndex === 2)
                     Qt.callLater(window.fitScheme)
             }
-            TabButton { text: qsTr("Canonical forms") }
-            TabButton { text: qsTr("Truth table") }
-            TabButton { text: qsTr("Gate scheme") }
+            TabButton {
+                id: formsTab
+                text: qsTr("Build function")
+                implicitWidth: 174
+                implicitHeight: 44
+                contentItem: Label {
+                    text: formsTab.text
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    font.pixelSize: 13
+                    font.weight: formsTab.checked ? Font.DemiBold : Font.Medium
+                    color: formsTab.checked ? window.accent : window.muted
+                }
+                background: Rectangle {
+                    radius: 10
+                    color: formsTab.checked ? "#ffffff" : "transparent"
+                    border.color: formsTab.checked ? "#d9e7e5" : "transparent"
+                }
+            }
+            TabButton {
+                id: tableTab
+                text: qsTr("Truth table")
+                implicitWidth: 150
+                implicitHeight: 44
+                contentItem: Label {
+                    text: tableTab.text
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    font.pixelSize: 13
+                    font.weight: tableTab.checked ? Font.DemiBold : Font.Medium
+                    color: tableTab.checked ? window.accent : window.muted
+                }
+                background: Rectangle {
+                    radius: 10
+                    color: tableTab.checked ? "#ffffff" : "transparent"
+                    border.color: tableTab.checked ? "#d9e7e5" : "transparent"
+                }
+            }
+            TabButton {
+                id: schemeTab
+                text: qsTr("Gate scheme")
+                implicitWidth: 150
+                implicitHeight: 44
+                contentItem: Label {
+                    text: schemeTab.text
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    font.pixelSize: 13
+                    font.weight: schemeTab.checked ? Font.DemiBold : Font.Medium
+                    color: schemeTab.checked ? window.accent : window.muted
+                }
+                background: Rectangle {
+                    radius: 10
+                    color: schemeTab.checked ? "#ffffff" : "transparent"
+                    border.color: schemeTab.checked ? "#d9e7e5" : "transparent"
+                }
+            }
         }
     }
 
@@ -127,66 +241,160 @@ ApplicationWindow {
         currentIndex: tabs.currentIndex
 
         ScrollView {
+            id: formsScroll
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             clip: true
             ScrollBar.horizontal.policy: ScrollBar.AsNeeded
             ColumnLayout {
-                width: Math.max(parent.width, 620)
-                spacing: 16
-                anchors.margins: 22
+                x: 22
+                y: 20
+                width: Math.max(formsScroll.availableWidth - 44, 620)
+                spacing: 18
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 288
-                    radius: 12
-                    color: "#ffffff"
-                    border.color: "#e1e7f0"
+                    Layout.preferredHeight: 380
+                    radius: 16
+                    color: window.surface
+                    border.color: window.border
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 18
-                        spacing: 10
-                        Label {
-                            text: qsTr("Enter a four-variable canonical form")
-                            font.pixelSize: 17
-                            font.bold: true
-                            color: "#17233b"
+                        anchors.margins: 22
+                        spacing: 12
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                spacing: 3
+                                Label {
+                                    text: qsTr("Build a Boolean function")
+                                    font.pixelSize: 19
+                                    font.bold: true
+                                    color: window.ink
+                                }
+                                Label {
+                                    text: qsTr("Enter a canonical form to generate the table and gate scheme.")
+                                    font.pixelSize: 12
+                                    color: window.muted
+                                }
+                            }
+                            Item { Layout.fillWidth: true }
+                            Label {
+                                text: qsTr("INPUT")
+                                color: window.accent
+                                font.pixelSize: 10
+                                font.bold: true
+                                padding: 8
+                                background: Rectangle {
+                                    color: window.accentSoft
+                                    radius: 9
+                                }
+                            }
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            Label { text: qsTr("Input form"); color: "#46546c" }
+                            Label {
+                                text: qsTr("Form")
+                                color: window.ink
+                                font.bold: true
+                            }
                             ComboBox {
                                 id: inputMode
                                 model: [
                                     qsTr("Disjunctive (SOP)"),
                                     qsTr("Conjunctive (POS)")
                                 ]
-                                Layout.preferredWidth: 230
+                                Layout.preferredWidth: 245
+                            }
+                            Item { Layout.fillWidth: true }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label {
+                                text: qsTr("Output")
+                                color: window.ink
+                                font.bold: true
+                            }
+                            ComboBox {
+                                id: outputSelector
+                                objectName: "outputSelector"
+                                model: window.backend.outputOptions
+                                textRole: "name"
+                                valueRole: "id"
+                                currentIndex: {
+                                    for (var index = 0; index < model.length; index++) {
+                                        if (model[index].id === window.backend.activeOutputId)
+                                            return index
+                                    }
+                                    return 0
+                                }
+                                Layout.preferredWidth: 150
+                                onActivated: {
+                                    window.backend.selectOutput(currentValue)
+                                    window.syncActiveOutput()
+                                }
+                            }
+                            TextField {
+                                id: newOutputName
+                                Layout.preferredWidth: 140
+                                placeholderText: qsTr("New output name")
+                                color: window.ink
+                                placeholderTextColor: window.muted
+                                onAccepted: {
+                                    window.backend.addOutput(text)
+                                    clear()
+                                    window.syncActiveOutput()
+                                }
+                            }
+                            Button {
+                                text: qsTr("Add output")
+                                onClicked: {
+                                    window.backend.addOutput(newOutputName.text)
+                                    newOutputName.clear()
+                                    window.syncActiveOutput()
+                                }
+                            }
+                            Button {
+                                text: qsTr("Remove")
+                                enabled: window.backend.outputOptions.length > 1
+                                onClicked: {
+                                    window.backend.removeActiveOutput()
+                                    window.syncActiveOutput()
+                                }
                             }
                             Item { Layout.fillWidth: true }
                         }
                         TextArea {
                             id: expressionInput
+                            objectName: "expressionInput"
                             Layout.fillWidth: true
                             Layout.fillHeight: true
+                            Layout.minimumHeight: 90
                             placeholderText: ""
                             wrapMode: TextEdit.Wrap
                             selectByMouse: true
+                            leftPadding: 12
+                            rightPadding: 12
+                            topPadding: 12
+                            bottomPadding: 10
                             font.family: "monospace"
                             font.pixelSize: 14
                             color: "#17233b"
                             placeholderTextColor: "#75839a"
                             selectionColor: "#b8cff4"
-                            selectedTextColor: "#17233b"
+                            selectedTextColor: window.ink
                             background: Rectangle {
-                                color: "#fbfcff"
-                                border.color: "#d8e0ed"
-                                radius: 7
+                                color: "#f7fafb"
+                                border.color: expressionInput.activeFocus
+                                    ? window.accent : "#dce6e6"
+                                radius: 10
                                 Text {
                                     anchors.fill: parent
                                     anchors.leftMargin: 12
                                     anchors.topMargin: 10
                                     text: inputMode.currentIndex === 0
-                                        ? "Example: A'B'C'D' + A'B + B'D'"
+                                        ? "Example: A'B'C'D'E' + ABCDE"
                                         : "Example: ΠP(1, 2, 3)"
-                                    color: "#75839a"
+                                    color: "#84949d"
                                     font: expressionInput.font
                                     wrapMode: Text.Wrap
                                     verticalAlignment: Text.AlignTop
@@ -197,7 +405,7 @@ ApplicationWindow {
                         RowLayout {
                             Layout.fillWidth: true
                             Button {
-                                text: qsTr("Calculate")
+                                text: qsTr("Generate results")
                                 highlighted: true
                                 onClicked: window.backend.calculate(
                                     inputMode.currentIndex === 0 ? "SOP" : "POS",
@@ -207,84 +415,120 @@ ApplicationWindow {
                             Label {
                                 Layout.fillWidth: true
                                 text: window.backend.error
-                                color: window.backend.error.startsWith("PDF exported") ? "#21824a" : "#bd3b3b"
+                                    || (window.backend.hasResult
+                                        ? qsTr("Function calculated. See the results above.")
+                                        : qsTr("Ready when you are."))
+                                color: window.backend.error
+                                    ? (window.backend.error.startsWith("PDF exported")
+                                        ? "#21824a" : "#bd3b3b")
+                                    : window.muted
                                 wrapMode: Text.Wrap
                             }
                         }
                     }
                 }
 
-                Label {
-                    text: qsTr("Equivalent canonical forms")
-                    font.pixelSize: 17
-                    font.bold: true
-                    color: "#17233b"
-                }
-                Rectangle {
+                RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 190
-                    radius: 12
-                    color: "#ffffff"
-                    border.color: "#e1e7f0"
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 16
-                        Label {
-                            text: qsTr("Disjunctive canonical form (SOP)")
-                            font.bold: true
-                            color: "#46546c"
-                        }
-                        TextArea {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 72
-                            text: window.backend.hasResult ? window.backend.sop : ""
-                            readOnly: true
-                            wrapMode: TextEdit.Wrap
-                            selectByMouse: true
-                            font.family: "monospace"
-                            color: "#17233b"
-                            selectedTextColor: "#17233b"
-                            background: Rectangle { color: "#f8faff"; radius: 6 }
-                        }
-                        Button {
-                            text: qsTr("Edit SOP input")
-                            Layout.alignment: Qt.AlignRight
-                            enabled: window.backend.hasResult
-                            onClicked: window.loadCanonicalForm("SOP")
-                        }
+                    Label {
+                        text: qsTr("Generated forms · %1").arg(window.backend.activeOutputName)
+                        font.pixelSize: 17
+                        font.bold: true
+                        color: window.ink
+                    }
+                    Item { Layout.fillWidth: true }
+                    Label {
+                        text: qsTr("OUTPUT")
+                        color: window.muted
+                        font.pixelSize: 10
+                        font.bold: true
                     }
                 }
-                Rectangle {
+                RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 190
-                    radius: 12
-                    color: "#ffffff"
-                    border.color: "#e1e7f0"
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 16
-                        Label {
-                            text: qsTr("Conjunctive canonical form (POS, P-cell notation)")
-                            font.bold: true
-                            color: "#46546c"
+                    spacing: 14
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 260
+                        Layout.preferredHeight: 186
+                        radius: 14
+                        color: window.surface
+                        border.color: window.border
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 16
+                            spacing: 10
+                            Label {
+                                text: qsTr("Disjunctive form  ·  SOP")
+                                font.bold: true
+                                color: window.ink
+                            }
+                            TextArea {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                text: window.backend.hasResult ? window.backend.sop : ""
+                                placeholderText: qsTr("Your SOP result will appear here")
+                                readOnly: true
+                                wrapMode: TextEdit.Wrap
+                                selectByMouse: true
+                                font.family: "monospace"
+                                font.pixelSize: 13
+                                color: window.ink
+                                placeholderTextColor: "#9aa9ae"
+                                selectedTextColor: window.ink
+                                background: Rectangle {
+                                    color: "#f7fafb"
+                                    radius: 8
+                                }
+                            }
+                            Button {
+                                text: qsTr("Use as input")
+                                Layout.alignment: Qt.AlignRight
+                                enabled: window.backend.hasResult
+                                onClicked: window.loadCanonicalForm("SOP")
+                            }
                         }
-                        TextArea {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 74
-                            text: window.backend.hasResult ? window.backend.pos : ""
-                            readOnly: true
-                            wrapMode: TextEdit.Wrap
-                            selectByMouse: true
-                            font.family: "monospace"
-                            color: "#17233b"
-                            selectedTextColor: "#17233b"
-                            background: Rectangle { color: "#f8faff"; radius: 6 }
-                        }
-                        Button {
-                            text: qsTr("Edit POS input")
-                            Layout.alignment: Qt.AlignRight
-                            enabled: window.backend.hasResult
-                            onClicked: window.loadCanonicalForm("POS")
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 260
+                        Layout.preferredHeight: 186
+                        radius: 14
+                        color: window.surface
+                        border.color: window.border
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 16
+                            spacing: 10
+                            Label {
+                                text: qsTr("Conjunctive form  ·  POS")
+                                font.bold: true
+                                color: window.ink
+                            }
+                            TextArea {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                text: window.backend.hasResult ? window.backend.pos : ""
+                                placeholderText: qsTr("Your POS result will appear here")
+                                readOnly: true
+                                wrapMode: TextEdit.Wrap
+                                selectByMouse: true
+                                font.family: "monospace"
+                                font.pixelSize: 13
+                                color: window.ink
+                                placeholderTextColor: "#9aa9ae"
+                                selectedTextColor: window.ink
+                                background: Rectangle {
+                                    color: "#f7fafb"
+                                    radius: 8
+                                }
+                            }
+                            Button {
+                                text: qsTr("Use as input")
+                                Layout.alignment: Qt.AlignRight
+                                enabled: window.backend.hasResult
+                                onClicked: window.loadCanonicalForm("POS")
+                            }
                         }
                     }
                 }
@@ -293,66 +537,110 @@ ApplicationWindow {
         }
 
         ScrollView {
+            id: tableScroll
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             clip: true
             ColumnLayout {
-                width: Math.max(parent.width, 670)
-                spacing: 16
-                anchors.margins: 22
+                x: 22
+                y: 20
+                width: Math.max(tableScroll.availableWidth - 44, 670)
+                spacing: 18
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 100
-                    radius: 12
-                    color: "#ffffff"
-                    border.color: "#e1e7f0"
+                    Layout.preferredHeight: 110
+                    radius: 16
+                    color: window.surface
+                    border.color: window.border
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 18
+                        anchors.leftMargin: 22
+                        anchors.rightMargin: 22
+                        anchors.topMargin: 15
+                        anchors.bottomMargin: 15
                         RowLayout {
                             Layout.fillWidth: true
                             Label {
                                 Layout.fillWidth: true
-                                text: qsTr("Four-variable truth table")
-                                font.pixelSize: 19
+                                text: qsTr("Truth table · %1 variables")
+                                    .arg(window.backend.variableCount)
+                                font.pixelSize: 20
                                 font.bold: true
-                                color: "#17233b"
+                                color: window.ink
+                            }
+                            Label {
+                                text: qsTr("%1 TABLES · %2 OUTPUTS")
+                                    .arg(tableView.tableCards.length)
+                                    .arg(window.backend.outputOptions.length)
+                                color: window.accent
+                                font.pixelSize: 10
+                                font.bold: true
+                                padding: 8
+                                background: Rectangle {
+                                    color: window.accentSoft
+                                    radius: 9
+                                }
                             }
                             Button {
                                 text: qsTr("Clear values")
+                                enabled: window.backend.hasResult
                                 onClicked: window.backend.clearTable()
                             }
                         }
                         Label {
-                            text: qsTr("Click a P cell to toggle 0/1. Each value updates the canonical forms and SOP gate scheme.")
-                            color: "#63718a"
+                            text: qsTr("Toggle a P cell to edit that output. Extra variables are fixed per 4×4 table; every output has its own tables.")
+                            color: window.muted
                             wrapMode: Text.Wrap
                         }
                     }
                 }
-                Rectangle {
+                ColumnLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 430
-                    radius: 12
-                    color: "#ffffff"
-                    border.color: "#e1e7f0"
-                    Item {
-                        id: pGrid
-                        anchors.fill: parent
-                        anchors.margins: 18
-                        Image {
-                            id: truthTableImage
-                            objectName: "truthTableImage"
-                            anchors.fill: parent
-                            cache: false
-                            fillMode: Image.Stretch
-                            source: tableView.imageUrl
-                            TapHandler {
-                                onTapped: function(eventPoint) {
-                                    tableView.toggleCellAt(
-                                        eventPoint.position.x,
-                                        eventPoint.position.y,
-                                        truthTableImage.width,
-                                        truthTableImage.height
-                                    )
+                    spacing: 14
+                    Repeater {
+                        model: tableView.tableCards
+                        delegate: Rectangle {
+                            required property var modelData
+                            objectName: "tableCard_" + modelData.outputId
+                                + "_" + modelData.sliceIndex
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 390
+                            radius: 16
+                            color: window.surface
+                            border.color: window.border
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 16
+                                spacing: 8
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: modelData.outputName
+                                        + (modelData.assignment
+                                            ? "  ·  " + modelData.assignment : "")
+                                    font.bold: true
+                                    color: window.ink
+                                }
+                                Image {
+                                    id: tableImage
+                                    objectName: "tableImage_" + modelData.outputId
+                                        + "_" + modelData.sliceIndex
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    cache: false
+                                    fillMode: Image.Stretch
+                                    source: modelData.imageUrl
+                                    TapHandler {
+                                        onTapped: function(eventPoint) {
+                                            tableView.toggleCellAt(
+                                                modelData.outputId,
+                                                modelData.sliceIndex,
+                                                eventPoint.position.x,
+                                                eventPoint.position.y,
+                                                tableImage.width,
+                                                tableImage.height
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -367,37 +655,39 @@ ApplicationWindow {
             spacing: 0
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 122
-                color: "#ffffff"
+                Layout.preferredHeight: 142
+                color: window.surface
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 20
-                    anchors.rightMargin: 20
-                    anchors.topMargin: 8
-                    anchors.bottomMargin: 6
-                    spacing: 3
+                    anchors.leftMargin: 22
+                    anchors.rightMargin: 22
+                    anchors.topMargin: 14
+                    anchors.bottomMargin: 12
+                    spacing: 8
                     RowLayout {
                         Layout.fillWidth: true
                         Label {
                             Layout.fillWidth: true
-                            text: qsTr("Add gates and wire a custom scheme")
+                            text: qsTr("Circuit tools")
+                            font.pixelSize: 17
                             font.bold: true
-                            color: "#17233b"
+                            color: window.ink
                         }
                         ComboBox {
                             id: newGateType
                             model: ["AND", "OR", "NOT", "INPUT", "OUTPUT", "0", "1"]
-                            Layout.preferredWidth: 100
+                            Layout.preferredWidth: 112
                         }
                         TextField {
                             id: newGateLabel
-                            Layout.preferredWidth: 125
+                            Layout.preferredWidth: 150
                             placeholderText: qsTr("Optional label")
-                            color: "#17233b"
-                            placeholderTextColor: "#75839a"
+                            color: window.ink
+                            placeholderTextColor: window.muted
                         }
                         Button {
                             text: qsTr("Add gate")
+                            highlighted: true
                             onClicked: {
                                 window.backend.addGate(newGateType.currentText, newGateLabel.text)
                                 newGateLabel.clear()
@@ -418,13 +708,25 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             text: window.backend.error
                                 ? window.backend.error
+                                : window.backend.schemeDescription
+                                    ? qsTr("MUX synthesized from the current f · drag gates or add custom logic")
                                 : window.connectionSource
                                     ? qsTr("Choose destination for %1.").arg(window.connectionSource)
                                     : window.wireMode
                                         ? qsTr("Choose a source gate, then its destination.")
                                         : qsTr("Drag gates to move them; use Fit, zoom, and scrollbars to navigate.")
-                            color: window.backend.error ? "#b3261e" : "#46546c"
+                            color: window.backend.error ? "#b3261e" : window.muted
                             elide: Text.ElideRight
+                        }
+                        Button {
+                            text: qsTr("Synthesize f as 4:1 MUX")
+                            enabled: window.backend.hasResult
+                            ToolTip.visible: hovered && !enabled
+                            ToolTip.text: qsTr("Enter a function in the Function tab first.")
+                            onClicked: {
+                                window.backend.generateMultiplexer()
+                                window.fitScheme()
+                            }
                         }
                         Button {
                             text: qsTr("Fit scheme")
@@ -432,11 +734,11 @@ ApplicationWindow {
                         }
                         Button {
                             text: "−"
-                            onClicked: window.schemeZoom = Math.max(0.15, window.schemeZoom - 0.1)
+                            onClicked: window.schemeZoom = Math.max(0.08, window.schemeZoom - 0.1)
                         }
                         Slider {
                             id: zoomSlider
-                            from: 0.15
+                            from: 0.08
                             to: 1.5
                             stepSize: 0.05
                             value: window.schemeZoom
@@ -446,7 +748,7 @@ ApplicationWindow {
                         Label {
                             Layout.preferredWidth: 48
                             text: Math.round(window.schemeZoom * 100) + "%"
-                            color: "#46546c"
+                            color: window.muted
                         }
                         Button {
                             text: "+"
@@ -466,17 +768,42 @@ ApplicationWindow {
                     id: diagramViewport
                     width: Math.ceil(window.backend.schemeWidth * window.schemeZoom)
                     height: Math.ceil(window.backend.schemeHeight * window.schemeZoom)
+                    Rectangle {
+                        anchors.fill: parent
+                        color: "#f8fbfb"
+                    }
                     Item {
                         id: diagram
                         width: window.backend.schemeWidth
                         height: window.backend.schemeHeight
                         scale: window.schemeZoom
                         transformOrigin: Item.TopLeft
-                    Canvas {
-                        id: wireCanvas
-                        anchors.fill: parent
-                        z: 1
-                        onPaint: {
+                        Rectangle {
+                            anchors.fill: parent
+                            color: "#f8fbfb"
+                            z: -1
+                        }
+                        Canvas {
+                            anchors.fill: parent
+                            z: 0
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                ctx.fillStyle = "#dfe8e8"
+                                for (var x = 20; x < width; x += 32) {
+                                    for (var y = 20; y < height; y += 32) {
+                                        ctx.beginPath()
+                                        ctx.arc(x, y, 1, 0, 2 * Math.PI)
+                                        ctx.fill()
+                                    }
+                                }
+                            }
+                        }
+                        Canvas {
+                            id: wireCanvas
+                            anchors.fill: parent
+                            z: 1
+                            onPaint: {
                             var ctx = getContext("2d")
                             ctx.clearRect(0, 0, width, height)
                             ctx.lineCap = "round"
@@ -528,195 +855,204 @@ ApplicationWindow {
                             }
                         }
                     }
-                    Repeater {
-                        model: window.backend.schemeNodes
-                        delegate: Rectangle {
-                            id: gate
-                            required property var modelData
-                            property real currentX: modelData.x
-                            property real currentY: modelData.y
-                            x: currentX
-                            y: currentY
-                            width: modelData.width
-                            height: modelData.height
-                            z: 2
-                            radius: 9
-                            color: "#f2f6ff"
-                            border.color: window.wireMode
-                                    && window.connectionSource === modelData.id
-                                ? "#e28719" : "#315eaa"
-                            border.width: 2
+                        Repeater {
+                            model: window.backend.schemeNodes
+                            delegate: Rectangle {
+                                id: gate
+                                required property var modelData
+                                property real currentX: modelData.x
+                                property real currentY: modelData.y
+                                x: currentX
+                                y: currentY
+                                width: modelData.width
+                                height: modelData.height
+                                z: 2
+                                radius: 9
+                                color: "#f2f6ff"
+                                border.color: window.wireMode
+                                        && window.connectionSource === modelData.id
+                                    ? "#e28719" : "#315eaa"
+                                border.width: 2
 
-                            Canvas {
-                                id: symbol
-                                anchors.fill: parent
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.clearRect(0, 0, width, height)
-                                    ctx.strokeStyle = "#17233b"
-                                    ctx.fillStyle = "#ffffff"
-                                    ctx.lineWidth = 2
-                                    var iconX = 23
-                                    var iconY = 10
-                                    for (var i = 0; i < window.backend.connections.length; i++) {
-                                        var wire = window.backend.connections[i]
-                                        if (wire.target === gate.modelData.id) {
+                                Canvas {
+                                    id: symbol
+                                    anchors.fill: parent
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        ctx.strokeStyle = "#17233b"
+                                        ctx.fillStyle = "#ffffff"
+                                        ctx.lineWidth = 2
+                                        var iconX = 23
+                                        var iconY = 10
+                                        for (var i = 0; i < window.backend.connections.length; i++) {
+                                            var wire = window.backend.connections[i]
+                                            if (wire.target === gate.modelData.id) {
+                                                ctx.beginPath()
+                                                ctx.strokeStyle = wire.color || "#315eaa"
+                                                ctx.moveTo(0, wire.targetOffset)
+                                                ctx.lineTo(iconX + 3, wire.targetOffset)
+                                                ctx.stroke()
+                                            }
+                                        }
+                                        var outputStartX = gate.modelData.type === "NOT"
+                                                ? iconX + 61
+                                                : gate.modelData.type === "INPUT"
+                                                    ? iconX + 54
+                                                    : gate.modelData.type === "CONSTANT"
+                                                        ? iconX + 56
+                                                        : iconX + 55
+                                        for (var j = 0; j < window.backend.connections.length; j++) {
+                                            var outputWire = window.backend.connections[j]
+                                            if (outputWire.source !== gate.modelData.id)
+                                                continue
                                             ctx.beginPath()
-                                            ctx.strokeStyle = wire.color || "#315eaa"
-                                            ctx.moveTo(0, wire.targetOffset)
-                                            ctx.lineTo(iconX + 3, wire.targetOffset)
+                                            ctx.strokeStyle = outputWire.color || "#315eaa"
+                                            ctx.moveTo(outputStartX, outputWire.sourceOffset)
+                                            ctx.lineTo(width, outputWire.sourceOffset)
                                             ctx.stroke()
                                         }
-                                    }
-                                    var outputStartX = gate.modelData.type === "NOT"
-                                            ? iconX + 61
-                                            : gate.modelData.type === "INPUT"
-                                                ? iconX + 54
-                                                : gate.modelData.type === "CONSTANT"
-                                                    ? iconX + 56
-                                                    : iconX + 55
-                                    for (var j = 0; j < window.backend.connections.length; j++) {
-                                        var outputWire = window.backend.connections[j]
-                                        if (outputWire.source !== gate.modelData.id)
-                                            continue
                                         ctx.beginPath()
-                                        ctx.strokeStyle = outputWire.color || "#315eaa"
-                                        ctx.moveTo(outputStartX, outputWire.sourceOffset)
-                                        ctx.lineTo(width, outputWire.sourceOffset)
-                                        ctx.stroke()
-                                    }
-                                    ctx.beginPath()
-                                    ctx.strokeStyle = "#17233b"
-                                    ctx.beginPath()
-                                    if (gate.modelData.type === "AND") {
-                                        ctx.moveTo(iconX + 3, iconY + 10)
-                                        ctx.lineTo(iconX + 28, iconY + 10)
-                                        ctx.arc(iconX + 28, iconY + 36, 26,
-                                            -Math.PI / 2, Math.PI / 2)
-                                        ctx.lineTo(iconX + 3, iconY + 62)
-                                        ctx.closePath()
-                                        ctx.fill()
-                                        ctx.stroke()
-                                    } else if (gate.modelData.type === "OR") {
-                                        ctx.moveTo(iconX + 3, iconY + 8)
-                                        ctx.quadraticCurveTo(iconX + 20, 46,
-                                            iconX + 3, iconY + 68)
-                                        ctx.quadraticCurveTo(iconX + 36, 68,
-                                            iconX + 60, 50)
-                                        ctx.quadraticCurveTo(iconX + 36, 32,
-                                            iconX + 3, iconY + 8)
-                                        ctx.closePath()
-                                        ctx.fill()
-                                        ctx.stroke()
-                                    } else if (gate.modelData.type === "NOT") {
-                                        ctx.moveTo(iconX + 6, iconY + 14)
-                                        ctx.lineTo(iconX + 49, 50)
-                                        ctx.lineTo(iconX + 6, iconY + 58)
-                                        ctx.closePath()
-                                        ctx.fill()
-                                        ctx.stroke()
+                                        ctx.strokeStyle = "#17233b"
                                         ctx.beginPath()
-                                        ctx.arc(iconX + 55, 50, 5, 0, 2 * Math.PI)
-                                        ctx.fill()
-                                        ctx.stroke()
-                                    } else if (gate.modelData.type === "INPUT") {
-                                        ctx.arc(iconX + 30, 49, 21, 0, 2 * Math.PI)
-                                        ctx.fill()
-                                        ctx.stroke()
-                                    } else {
-                                        ctx.rect(iconX + 4, iconY + 12, 52, 50)
-                                        ctx.fill()
-                                        ctx.stroke()
-                                        if (gate.modelData.type === "CONSTANT") {
-                                            ctx.fillStyle = "#17233b"
-                                            ctx.font = "bold 22px sans-serif"
-                                            ctx.textAlign = "center"
-                                            ctx.textBaseline = "middle"
-                                            ctx.fillText(gate.modelData.label,
-                                                iconX + 30, 47)
+                                        if (gate.modelData.type === "AND") {
+                                            ctx.moveTo(iconX + 3, iconY + 10)
+                                            ctx.lineTo(iconX + 28, iconY + 10)
+                                            ctx.arc(iconX + 28, iconY + 36, 26,
+                                                -Math.PI / 2, Math.PI / 2)
+                                            ctx.lineTo(iconX + 3, iconY + 62)
+                                            ctx.closePath()
+                                            ctx.fill()
+                                            ctx.stroke()
+                                        } else if (gate.modelData.type === "OR") {
+                                            ctx.moveTo(iconX + 3, iconY + 8)
+                                            ctx.quadraticCurveTo(iconX + 20, 46,
+                                                iconX + 3, iconY + 68)
+                                            ctx.quadraticCurveTo(iconX + 36, 68,
+                                                iconX + 60, 50)
+                                            ctx.quadraticCurveTo(iconX + 36, 32,
+                                                iconX + 3, iconY + 8)
+                                            ctx.closePath()
+                                            ctx.fill()
+                                            ctx.stroke()
+                                        } else if (gate.modelData.type === "NOT") {
+                                            ctx.moveTo(iconX + 6, iconY + 14)
+                                            ctx.lineTo(iconX + 49, 50)
+                                            ctx.lineTo(iconX + 6, iconY + 58)
+                                            ctx.closePath()
+                                            ctx.fill()
+                                            ctx.stroke()
+                                            ctx.beginPath()
+                                            ctx.arc(iconX + 55, 50, 5, 0, 2 * Math.PI)
+                                            ctx.fill()
+                                            ctx.stroke()
+                                        } else if (gate.modelData.type === "INPUT") {
+                                            ctx.arc(iconX + 30, 49, 21, 0, 2 * Math.PI)
+                                            ctx.fill()
+                                            ctx.stroke()
+                                        } else if (gate.modelData.type === "OUTPUT") {
+                                            ctx.moveTo(iconX + 3, 50)
+                                            ctx.lineTo(iconX + 49, 50)
+                                            ctx.stroke()
+                                            ctx.beginPath()
+                                            ctx.arc(iconX + 54, 50, 5, 0, 2 * Math.PI)
+                                            ctx.fill()
+                                            ctx.stroke()
+                                        } else {
+                                            ctx.rect(iconX + 4, iconY + 12, 52, 50)
+                                            ctx.fill()
+                                            ctx.stroke()
+                                            if (gate.modelData.type === "CONSTANT") {
+                                                ctx.fillStyle = "#17233b"
+                                                ctx.font = "bold 22px sans-serif"
+                                                ctx.textAlign = "center"
+                                                ctx.textBaseline = "middle"
+                                                ctx.fillText(gate.modelData.label,
+                                                    iconX + 30, 47)
+                                            }
+                                        }
+                                        }
+                                    }
+                                Label {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.bottom: parent.bottom
+                                    anchors.bottomMargin: 3
+                                    width: parent.width - 8
+                                    text: gate.modelData.label
+                                    horizontalAlignment: Text.AlignHCenter
+                                    elide: Text.ElideRight
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                    color: "#26354f"
+                                }
+                                TapHandler {
+                                    onTapped: {
+                                        if (!window.wireMode)
+                                            return
+                                        if (!window.connectionSource) {
+                                            window.connectionSource = gate.modelData.id
+                                        } else {
+                                            window.backend.connectNodes(
+                                                window.connectionSource, gate.modelData.id
+                                            )
+                                            window.connectionSource = ""
+                                            window.wireMode = false
                                         }
                                     }
                                 }
-                            }
-                            Label {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                anchors.bottom: parent.bottom
-                                anchors.bottomMargin: 3
-                                width: parent.width - 8
-                                text: gate.modelData.label
-                                horizontalAlignment: Text.AlignHCenter
-                                elide: Text.ElideRight
-                                font.pixelSize: 10
-                                font.bold: true
-                                color: "#26354f"
-                            }
-                            TapHandler {
-                                onTapped: {
-                                    if (!window.wireMode)
-                                        return
-                                    if (!window.connectionSource) {
-                                        window.connectionSource = gate.modelData.id
-                                    } else {
-                                        window.backend.connectNodes(
-                                            window.connectionSource, gate.modelData.id
+                                MouseArea {
+                                    anchors.fill: parent
+                                    acceptedButtons: Qt.NoButton
+                                    cursorShape: Qt.OpenHandCursor
+                                }
+                                DragHandler {
+                                    id: dragHandler
+                                    target: null
+                                    property point origin
+                                    onActiveChanged: {
+                                        if (active) {
+                                            origin = Qt.point(gate.currentX, gate.currentY)
+                                        } else {
+                                            window.backend.moveNode(gate.modelData.id, gate.currentX, gate.currentY)
+                                        }
+                                    }
+                                    onTranslationChanged: {
+                                        if (!active)
+                                            return
+                                        var nextX = origin.x + translation.x
+                                        var nextY = origin.y + translation.y
+                                        gate.currentX = Math.max(0, Math.min(
+                                            nextX, window.backend.schemeWidth - gate.width
+                                        ))
+                                        gate.currentY = Math.max(0, Math.min(
+                                            nextY, window.backend.schemeHeight - gate.height
+                                        ))
+                                        window.updatePosition(
+                                            gate.modelData.id, gate.currentX, gate.currentY
                                         )
-                                        window.connectionSource = ""
-                                        window.wireMode = false
                                     }
-                                }
-                            }
-                            MouseArea {
-                                anchors.fill: parent
-                                acceptedButtons: Qt.NoButton
-                                cursorShape: Qt.OpenHandCursor
-                            }
-                            DragHandler {
-                                id: dragHandler
-                                target: null
-                                property point origin
-                                onActiveChanged: {
-                                    if (active) {
-                                        origin = Qt.point(gate.currentX, gate.currentY)
-                                    } else {
-                                        window.backend.moveNode(gate.modelData.id, gate.currentX, gate.currentY)
-                                    }
-                                }
-                                onTranslationChanged: {
-                                    if (!active)
-                                        return
-                                    var nextX = origin.x + translation.x
-                                    var nextY = origin.y + translation.y
-                                    gate.currentX = Math.max(0, Math.min(
-                                        nextX, window.backend.schemeWidth - gate.width
-                                    ))
-                                    gate.currentY = Math.max(0, Math.min(
-                                        nextY, window.backend.schemeHeight - gate.height
-                                    ))
-                                    window.updatePosition(
-                                        gate.modelData.id, gate.currentX, gate.currentY
-                                    )
                                 }
                             }
                         }
                     }
-                    Label {
-                        anchors.left: parent.left
-                        anchors.bottom: parent.bottom
-                        anchors.margins: 12
-                        text: window.backend.error
-                            ? window.backend.error
-                            : window.backend.hasResult
-                                ? qsTr("Generated from the current function · drag gates or add custom logic")
-                                : qsTr("Add a gate or calculate a canonical form to build the scheme.")
-                        color: window.backend.error ? "#b3261e" : "#46546c"
-                        font.pixelSize: 12
-                        z: 3
-                    }
+                        Label {
+                            anchors.left: parent.left
+                            anchors.bottom: parent.bottom
+                            anchors.margins: 12
+                            text: window.backend.error
+                                ? window.backend.error
+                                : window.backend.schemeDescription
+                                    ? qsTr("MUX decomposition of the selected f · drag gates to rearrange")
+                                : window.backend.hasAnyResult
+                                    ? qsTr("Generated from the current function · drag gates or add custom logic")
+                                    : qsTr("Add a gate or calculate a canonical form to build the scheme.")
+                            color: window.backend.error ? "#b3261e" : "#46546c"
+                            font.pixelSize: 12
+                            z: 3
                     }
                 }
             }
         }
-
     }
 
     FileDialog {
