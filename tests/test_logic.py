@@ -131,6 +131,21 @@ class ViewModelTests(unittest.TestCase):
         or_gates = [node for node in model.schemeNodes if node["type"] == "OR"]
         self.assertEqual(len(and_gates), 3)
         self.assertEqual(len(or_gates), 1)
+        self.assertTrue(all(
+            node["style"] == "schematic" for node in model.schemeNodes
+        ))
+        self.assertEqual(
+            [node["type"] for node in model.schemeNodes].count("OUTPUT"), 1
+        )
+        self.assertTrue(all(
+            wire.get("junction")
+            for wire in model.connections
+            if wire["target"].startswith("and_term_")
+        ))
+        self.assertEqual({
+            wire["target"] for wire in model.connections
+            if wire["source"] == "not_A"
+        }, {"and_term_0", "and_term_1"})
         self.assertEqual(
             sorted(sum(wire["target"] == gate["id"] for wire in model.connections)
                    for gate in and_gates),
@@ -162,7 +177,10 @@ class ViewModelTests(unittest.TestCase):
             len(and_to_or),
         )
         nodes = {node["id"]: node for node in model.schemeNodes}
-        self.assertTrue(any(wire.get("wrapSide") for wire in model.connections))
+        self.assertTrue(all(
+            wire["routeStyle"] == "schematic" for wire in model.connections
+        ))
+        self.assertFalse(any(wire.get("wrapSide") for wire in model.connections))
         for wire in model.connections:
             route = _wire_route_points(
                 wire, nodes[wire["source"]], nodes[wire["target"]]
@@ -173,13 +191,71 @@ class ViewModelTests(unittest.TestCase):
                 if node["id"] not in (wire["source"], wire["target"])
             ))
 
+        def evaluate(node_id, assignment):
+            node = nodes[node_id]
+            if node["type"] == "INPUT":
+                return assignment[node["label"]]
+            sources = [
+                wire["source"] for wire in model.connections
+                if wire["target"] == node_id
+            ]
+            values = [evaluate(source, assignment) for source in sources]
+            if node["type"] == "NOT":
+                return 1 - values[0]
+            if node["type"] == "AND":
+                return int(all(values))
+            if node["type"] == "OR":
+                return int(any(values))
+            if node["type"] == "OUTPUT":
+                return values[0]
+            self.fail(f"Unexpected generated gate type: {node['type']}")
+
+        for index in range(16):
+            assignment = {
+                variable: (index >> (3 - offset)) & 1
+                for offset, variable in enumerate("ABCD")
+            }
+            self.assertEqual(
+                evaluate("output_F", assignment),
+                int(index in model._minterms),
+                f"Generated circuit mismatch at P{index}",
+            )
+
+    def test_positive_and_negated_a_use_separate_visible_rails(self):
+        model = BooleanLogic()
+        model.calculate("SOP", "A'B + AB'")
+        nodes = {node["id"]: node for node in model.schemeNodes}
+        wires_from_a = [
+            wire for wire in model.connections if wire["source"] == "var_A"
+        ]
+        wires_from_a_bar = [
+            wire for wire in model.connections if wire["source"] == "not_A"
+        ]
+        self.assertEqual(
+            {wire["target"] for wire in wires_from_a},
+            {"not_A", "and_term_1"},
+        )
+        self.assertEqual(
+            {wire["target"] for wire in wires_from_a_bar},
+            {"and_term_0"},
+        )
+        positive_product_wire = next(
+            wire for wire in wires_from_a
+            if wire["target"].startswith("and_term_")
+        )
+        self.assertLess(positive_product_wire["busX"], nodes["not_A"]["x"])
+        self.assertGreater(
+            wires_from_a_bar[0]["busX"],
+            nodes["not_A"]["x"] + nodes["not_A"]["width"],
+        )
+
     def test_dense_schemes_keep_each_source_signal_distinguishable(self):
         model = BooleanLogic()
         model.calculate("SOP", "Sigma m(" + ", ".join(map(str, range(16))) + ")")
         colors_by_source = {
             wire["source"]: wire["color"] for wire in model.connections
         }
-        self.assertEqual(len(colors_by_source), 24)
+        self.assertEqual(len(colors_by_source), 25)
         self.assertEqual(len(set(colors_by_source.values())), len(colors_by_source))
         nodes = {node["id"]: node for node in model.schemeNodes}
         for wire in model.connections:
@@ -197,10 +273,22 @@ class ViewModelTests(unittest.TestCase):
             fanout_offsets.setdefault(wire["source"], []).append(
                 wire["sourceOffset"]
             )
+        node_by_id = {node["id"]: node for node in model.schemeNodes}
+        schematic_rail_offsets = [
+            offsets for source_id, offsets in fanout_offsets.items()
+            if node_by_id[source_id]["type"] in {"INPUT", "NOT"}
+        ]
+        self.assertTrue(all(
+            len(set(offsets)) == 1 for offsets in schematic_rail_offsets
+        ))
+        non_input_fanouts = [
+            offsets for source_id, offsets in fanout_offsets.items()
+            if node_by_id[source_id]["type"] not in {"INPUT", "NOT"}
+        ]
         self.assertTrue(all(
             min(b - a for a, b in zip(sorted(offsets), sorted(offsets)[1:]))
             >= 8
-            for offsets in fanout_offsets.values()
+            for offsets in non_input_fanouts
             if len(offsets) > 1
         ))
         wrapped_lanes = sorted(
@@ -281,10 +369,10 @@ class ViewModelTests(unittest.TestCase):
         self.assertEqual(len(model.tablePanels), 8)
         self.assertEqual(model.activeOutputName, "Y0")
         self.assertTrue(any(
-            node["label"] == "OR  F" for node in model.schemeNodes
+            node["label"] == "OR F" for node in model.schemeNodes
         ))
         self.assertTrue(any(
-            node["label"] == "OR  Y0" for node in model.schemeNodes
+            node["label"] == "OR Y0" for node in model.schemeNodes
         ))
 
         original_sop = model.sop
@@ -452,7 +540,7 @@ class ViewModelTests(unittest.TestCase):
         model.moveNode("and_term_0", 10_000, 10_000)
         node = next(node for node in model.schemeNodes if node["id"] == "and_term_0")
         self.assertEqual(node["x"] + node["width"], model.schemeWidth)
-        self.assertEqual(node["y"] + node["height"], model.schemeHeight)
+        self.assertLessEqual(node["y"] + node["height"], model.schemeHeight)
         left, top, right, bottom = model._scheme_bounds()
         self.assertLessEqual(left, min(item["x"] for item in model.schemeNodes))
         self.assertGreaterEqual(right, max(
@@ -463,6 +551,32 @@ class ViewModelTests(unittest.TestCase):
             item["y"] + item["height"] for item in model.schemeNodes
         ))
         self.assertNotEqual((left, top, right, bottom), original_bounds)
+
+    def test_ctrl_z_scheme_undo_restores_drag_and_generated_scheme(self):
+        model = BooleanLogic()
+        model.calculate("SOP", "A'B'C'D' + A'B'CD + AB'CD'")
+        original_nodes = {
+            node["id"]: (node["x"], node["y"])
+            for node in model.schemeNodes
+        }
+        model.moveNode("and_term_0", 720, 180)
+        self.assertTrue(model.canUndoScheme)
+        model.undoScheme()
+        restored_nodes = {
+            node["id"]: (node["x"], node["y"])
+            for node in model.schemeNodes
+        }
+        self.assertEqual(restored_nodes, original_nodes)
+        self.assertFalse(model.canUndoScheme)
+
+        model.generateMultiplexer()
+        self.assertEqual(model.schemeKind, "MUX")
+        model.undoScheme()
+        self.assertEqual(model.schemeKind, "FORMULA")
+        self.assertEqual(
+            {node["id"] for node in model.schemeNodes},
+            set(original_nodes),
+        )
 
     def test_add_gates_and_connect_custom_scheme(self):
         model = BooleanLogic()
@@ -483,6 +597,13 @@ class ViewModelTests(unittest.TestCase):
             and "targetRouteIndex" in wire
             for wire in model.connections
         ))
+        self.assertEqual(
+            [(node["type"], node["label"]) for node in model.schemeNodes],
+            [("INPUT", "X"), ("INPUT", "Y"), ("AND", "AND1"), ("OUTPUT", "F")],
+        )
+        model.undoScheme()
+        self.assertEqual(len(model.connections), 2)
+        model.undoScheme()
         self.assertEqual(
             [(node["type"], node["label"]) for node in model.schemeNodes],
             [("INPUT", "X"), ("INPUT", "Y"), ("AND", "AND1"), ("OUTPUT", "F")],

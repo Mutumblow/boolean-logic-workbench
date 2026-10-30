@@ -701,6 +701,11 @@ ApplicationWindow {
                                 window.connectionSource = ""
                             }
                         }
+                        Button {
+                            text: qsTr("Undo")
+                            enabled: window.backend.canUndoScheme
+                            onClicked: window.backend.undoScheme()
+                        }
                     }
                     RowLayout {
                         Layout.fillWidth: true
@@ -708,8 +713,10 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             text: window.backend.error
                                 ? window.backend.error
-                                : window.backend.schemeDescription
+                                : window.backend.schemeKind === "MUX"
                                     ? qsTr("MUX synthesized from the current f · drag gates or add custom logic")
+                                : window.backend.schemeKind === "FORMULA"
+                                    ? window.backend.schemeDescription
                                 : window.connectionSource
                                     ? qsTr("Choose destination for %1.").arg(window.connectionSource)
                                     : window.wireMode
@@ -819,7 +826,21 @@ ApplicationWindow {
                                 var y2 = to.y + wire.targetOffset
                                 ctx.beginPath()
                                 ctx.moveTo(x1, y1)
-                                if (wire.wrapSide) {
+                                if (wire.routeStyle === "schematic") {
+                                    if (wire.bypassRect && wire.bypassRect.length === 4) {
+                                        var bypass = wire.bypassRect
+                                        var bypassY = bypass[1] - 8
+                                        ctx.lineTo(bypass[0] - 8, y1)
+                                        ctx.lineTo(bypass[0] - 8, bypassY)
+                                        ctx.lineTo(bypass[0] + bypass[2] + 8, bypassY)
+                                        ctx.lineTo(bypass[0] + bypass[2] + 8, y1)
+                                    }
+                                    ctx.lineTo(wire.busX === undefined
+                                        ? (x1 + x2) / 2 : wire.busX, y1)
+                                    ctx.lineTo(wire.busX === undefined
+                                        ? (x1 + x2) / 2 : wire.busX, y2)
+                                    ctx.lineTo(x2, y2)
+                                } else if (wire.wrapSide) {
                                     var wrapDirection = x2 >= x1 ? 1 : -1
                                     var wrapLaunchX = x1 + wrapDirection
                                             * (12 + wire.sourceRouteIndex * 6)
@@ -853,6 +874,25 @@ ApplicationWindow {
                                 ctx.lineWidth = 3
                                 ctx.stroke()
                             }
+                            for (var junctionIndex = 0;
+                                    junctionIndex < window.backend.connections.length;
+                                    junctionIndex++) {
+                                var junctionWire =
+                                        window.backend.connections[junctionIndex]
+                                if (!junctionWire.junction)
+                                    continue
+                                var junctionTarget =
+                                        window.positions[junctionWire.target]
+                                if (!junctionTarget)
+                                    continue
+                                var junctionY = junctionTarget.y
+                                        + junctionWire.targetOffset
+                                ctx.beginPath()
+                                ctx.fillStyle = "#17233b"
+                                ctx.arc(junctionWire.busX, junctionY, 3, 0,
+                                    2 * Math.PI)
+                                ctx.fill()
+                            }
                         }
                     }
                         Repeater {
@@ -868,11 +908,13 @@ ApplicationWindow {
                                 height: modelData.height
                                 z: 2
                                 radius: 9
-                                color: "#f2f6ff"
-                                border.color: window.wireMode
+                                color: gate.modelData.style === "schematic"
+                                    ? "transparent" : "#f2f6ff"
+                                border.color: gate.modelData.style === "schematic"
+                                    ? "transparent" : window.wireMode
                                         && window.connectionSource === modelData.id
                                     ? "#e28719" : "#315eaa"
-                                border.width: 2
+                                border.width: gate.modelData.style === "schematic" ? 0 : 2
 
                                 Canvas {
                                     id: symbol
@@ -885,6 +927,106 @@ ApplicationWindow {
                                         ctx.lineWidth = 2
                                         var iconX = 23
                                         var iconY = 10
+                                        if (gate.modelData.style === "schematic") {
+                                            ctx.strokeStyle = "#17233b"
+                                            ctx.fillStyle = "#ffffff"
+                                            ctx.lineWidth = 1.8
+                                            var centerY = height / 2
+                                            for (var inputIndex = 0;
+                                                    inputIndex < window.backend.connections.length;
+                                                    inputIndex++) {
+                                                var schematicInput =
+                                                        window.backend.connections[inputIndex]
+                                                if (schematicInput.target !== gate.modelData.id)
+                                                    continue
+                                                ctx.beginPath()
+                                                ctx.moveTo(0, schematicInput.targetOffset)
+                                                ctx.lineTo(gate.modelData.type === "OR" ? 20
+                                                    : gate.modelData.type === "AND" ? 8
+                                                    : gate.modelData.type === "NOT" ? 4 : 0,
+                                                    schematicInput.targetOffset)
+                                                ctx.stroke()
+                                            }
+                                            for (var outputIndex = 0;
+                                                    outputIndex < window.backend.connections.length;
+                                                    outputIndex++) {
+                                                var schematicOutput =
+                                                        window.backend.connections[outputIndex]
+                                                if (schematicOutput.source !== gate.modelData.id)
+                                                    continue
+                                                var symbolEnd = gate.modelData.type === "OR"
+                                                        ? width - 18
+                                                        : gate.modelData.type === "AND" ? width - 16
+                                                        : gate.modelData.type === "NOT" ? width - 9
+                                                        : gate.modelData.type === "OUTPUT" ? width - 8
+                                                        : gate.modelData.type === "INPUT" ? 15
+                                                        : width - 8
+                                                ctx.beginPath()
+                                                ctx.moveTo(symbolEnd, schematicOutput.sourceOffset)
+                                                ctx.lineTo(width, schematicOutput.sourceOffset)
+                                                ctx.stroke()
+                                            }
+                                            ctx.beginPath()
+                                            if (gate.modelData.type === "INPUT") {
+                                                ctx.arc(9, centerY, 4, 0, 2 * Math.PI)
+                                                ctx.stroke()
+                                                ctx.beginPath()
+                                                ctx.moveTo(13, centerY)
+                                                ctx.lineTo(width, centerY)
+                                                ctx.stroke()
+                                            } else if (gate.modelData.type === "AND") {
+                                                ctx.moveTo(8, 4)
+                                                ctx.lineTo(width - 18, 4)
+                                                ctx.arc(width - 18, centerY, height / 2 - 4,
+                                                    -Math.PI / 2, Math.PI / 2)
+                                                ctx.lineTo(8, height - 4)
+                                                ctx.closePath()
+                                                ctx.fill()
+                                                ctx.stroke()
+                                            } else if (gate.modelData.type === "OR") {
+                                                ctx.moveTo(20, 4)
+                                                ctx.quadraticCurveTo(36, centerY,
+                                                    20, height - 4)
+                                                ctx.quadraticCurveTo(width - 35, height - 4,
+                                                    width - 18, centerY)
+                                                ctx.quadraticCurveTo(width - 35, 4,
+                                                    20, 4)
+                                                ctx.closePath()
+                                                ctx.fill()
+                                                ctx.stroke()
+                                            } else if (gate.modelData.type === "NOT") {
+                                                ctx.moveTo(4, 4)
+                                                ctx.lineTo(width - 16, centerY)
+                                                ctx.lineTo(4, height - 4)
+                                                ctx.closePath()
+                                                ctx.fill()
+                                                ctx.stroke()
+                                                ctx.beginPath()
+                                                ctx.arc(width - 9, centerY, 3.5,
+                                                    0, 2 * Math.PI)
+                                                ctx.fill()
+                                                ctx.stroke()
+                                            } else if (gate.modelData.type === "OUTPUT") {
+                                                ctx.moveTo(0, centerY)
+                                                ctx.lineTo(width - 9, centerY)
+                                                ctx.stroke()
+                                                ctx.beginPath()
+                                                ctx.arc(width - 5, centerY, 4,
+                                                    0, 2 * Math.PI)
+                                                ctx.stroke()
+                                            } else {
+                                                ctx.rect(5, 4, width - 10, height - 8)
+                                                ctx.fill()
+                                                ctx.stroke()
+                                                ctx.fillStyle = "#17233b"
+                                                ctx.font = "bold 13px sans-serif"
+                                                ctx.textAlign = "center"
+                                                ctx.textBaseline = "middle"
+                                                ctx.fillText(gate.modelData.label,
+                                                    width / 2, centerY)
+                                            }
+                                            return
+                                        }
                                         for (var i = 0; i < window.backend.connections.length; i++) {
                                             var wire = window.backend.connections[i]
                                             if (wire.target === gate.modelData.id) {
@@ -974,14 +1116,31 @@ ApplicationWindow {
                                         }
                                     }
                                 Label {
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    anchors.bottom: parent.bottom
-                                    anchors.bottomMargin: 3
-                                    width: parent.width - 8
+                                    visible: gate.modelData.style !== "schematic"
+                                        || ["INPUT", "NOT", "OUTPUT"].indexOf(
+                                            gate.modelData.type) >= 0
+                                    x: gate.modelData.style === "schematic"
+                                        ? gate.modelData.type === "INPUT" ? -25
+                                            : gate.modelData.type === "OUTPUT"
+                                                ? parent.width + 2 : 0
+                                        : 4
+                                    y: gate.modelData.style === "schematic"
+                                        ? gate.modelData.type === "NOT"
+                                            ? parent.height + 1 : 0
+                                        : parent.height - 23
+                                    width: gate.modelData.style === "schematic"
+                                        ? gate.modelData.type === "INPUT"
+                                            ? 22 : gate.modelData.type === "OUTPUT" ? 30 : parent.width
+                                        : parent.width - 8
+                                    height: 20
+                                    horizontalAlignment: gate.modelData.style === "schematic"
+                                        && gate.modelData.type === "INPUT"
+                                        ? Text.AlignRight : Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
                                     text: gate.modelData.label
-                                    horizontalAlignment: Text.AlignHCenter
                                     elide: Text.ElideRight
-                                    font.pixelSize: 10
+                                    font.pixelSize: gate.modelData.style === "schematic"
+                                        ? 12 : 10
                                     font.bold: true
                                     color: "#26354f"
                                 }
@@ -1041,10 +1200,10 @@ ApplicationWindow {
                             anchors.margins: 12
                             text: window.backend.error
                                 ? window.backend.error
-                                : window.backend.schemeDescription
+                                : window.backend.schemeKind === "MUX"
                                     ? qsTr("MUX decomposition of the selected f · drag gates to rearrange")
                                 : window.backend.hasAnyResult
-                                    ? qsTr("Generated from the current function · drag gates or add custom logic")
+                                    ? qsTr("Generated from the current function · press Ctrl+Z to undo scheme edits")
                                     : qsTr("Add a gate or calculate a canonical form to build the scheme.")
                             color: window.backend.error ? "#b3261e" : "#46546c"
                             font.pixelSize: 12
@@ -1062,6 +1221,12 @@ ApplicationWindow {
         nameFilters: ["PDF files (*.pdf)"]
         defaultSuffix: "pdf"
         onAccepted: window.backend.exportPdf(selectedFile.toString())
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Z"
+        enabled: tabs.currentIndex === 2 && !newGateLabel.activeFocus
+        onActivated: window.backend.undoScheme()
     }
 
     Connections {

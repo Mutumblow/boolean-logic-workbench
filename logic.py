@@ -1,4 +1,5 @@
 import re
+from copy import deepcopy
 from functools import lru_cache
 from math import ceil
 from typing import Any
@@ -44,6 +45,17 @@ def _wire_route_points(
     y1 = source["y"] + wire["sourceOffset"]
     x2 = target["x"]
     y2 = target["y"] + wire["targetOffset"]
+    if wire.get("routeStyle") == "schematic":
+        channel_x = wire.get("busX", (x1 + x2) / 2)
+        points = [
+            (x1, y1),
+        ]
+        points.extend([
+            (channel_x, y1),
+            (channel_x, y2),
+            (x2, y2),
+        ])
+        return points
     direction = 1 if x2 >= x1 else -1
     launch_x = x1 + direction * (12 + wire["sourceRouteIndex"] * 6)
     approach_x = x2 - direction * (12 + wire["targetRouteIndex"] * 6)
@@ -494,7 +506,9 @@ class BooleanLogic(QObject):
         self._scheme_width = 1000
         self._scheme_height = 620
         self._scheme_description = ""
+        self._scheme_kind = "FORMULA"
         self._node_positions: dict[str, tuple[float, float]] = {}
+        self._scheme_undo_stack: list[dict[str, Any]] = []
         self._scheme_cubes: list[Cube] = []
         self._refresh_derived_state()
 
@@ -574,6 +588,14 @@ class BooleanLogic(QObject):
     @Property(str, notify=schemeChanged)
     def schemeDescription(self) -> str:
         return self._scheme_description
+
+    @Property(str, notify=schemeChanged)
+    def schemeKind(self) -> str:
+        return self._scheme_kind
+
+    @Property(bool, notify=schemeChanged)
+    def canUndoScheme(self) -> bool:
+        return bool(self._scheme_undo_stack)
 
     @Slot(str, str)
     def calculate(self, mode: str, text: str) -> None:
@@ -804,6 +826,7 @@ class BooleanLogic(QObject):
             )
         ]
         self._error = ""
+        self._scheme_undo_stack.clear()
         self._build_scheme()
         self._assign_wire_routes()
         self.changed.emit()
@@ -843,6 +866,9 @@ class BooleanLogic(QObject):
             return
         x = max(0, min(float(x), self._scheme_width - node["width"]))
         y = max(0, min(float(y), self._scheme_height - node["height"]))
+        if (x, y) == (node["x"], node["y"]):
+            return
+        self._push_scheme_undo()
         self._node_positions[node_id] = (x, y)
         node["x"] = x
         node["y"] = y
@@ -879,10 +905,12 @@ class BooleanLogic(QObject):
             "id": node_id, "label": node_label, "type": node_kind,
             "x": float(x), "y": float(y), "width": 110, "height": 100,
         }
+        self._push_scheme_undo()
         self._nodes.append(node)
         self._node_positions[node_id] = (float(x), float(y))
         self._scheme_width = max(self._scheme_width, x + 150)
         self._scheme_height = max(self._scheme_height, y + 130)
+        self._scheme_kind = "CUSTOM"
         self._assign_wire_routes()
         self._error = ""
         self.changed.emit()
@@ -929,6 +957,7 @@ class BooleanLogic(QObject):
                 visited.add(current)
                 stack.extend(adjacency.get(current, []))
 
+        self._push_scheme_undo()
         self._connections.append({
             "source": source_id,
             "target": target_id,
@@ -937,6 +966,7 @@ class BooleanLogic(QObject):
             "color": _wire_color(source_id),
         })
         self._assign_wire_routes()
+        self._scheme_kind = "CUSTOM"
         self._error = ""
         self.changed.emit()
         self.schemeChanged.emit()
@@ -948,9 +978,11 @@ class BooleanLogic(QObject):
             self._set_error("Enter or calculate f before generating its MUX scheme.")
             return
 
+        self._push_scheme_undo()
         self._nodes = []
         self._connections = []
         self._node_positions = {}
+        self._scheme_kind = "MUX"
         self._scheme_width = 1800
         self._scheme_height = 800
         self._scheme_description = (
@@ -1114,6 +1146,36 @@ class BooleanLogic(QObject):
         self.changed.emit()
         self.schemeChanged.emit()
 
+    def _push_scheme_undo(self) -> None:
+        self._scheme_undo_stack.append({
+            "nodes": deepcopy(self._nodes),
+            "connections": deepcopy(self._connections),
+            "nodePositions": self._node_positions.copy(),
+            "width": self._scheme_width,
+            "height": self._scheme_height,
+            "description": self._scheme_description,
+            "kind": self._scheme_kind,
+        })
+        if len(self._scheme_undo_stack) > 100:
+            del self._scheme_undo_stack[0]
+
+    @Slot()
+    def undoScheme(self) -> None:
+        if not self._scheme_undo_stack:
+            return
+        state = self._scheme_undo_stack.pop()
+        self._nodes = state["nodes"]
+        self._connections = state["connections"]
+        self._node_positions = state["nodePositions"]
+        self._scheme_width = state["width"]
+        self._scheme_height = state["height"]
+        self._scheme_description = state["description"]
+        self._scheme_kind = state["kind"]
+        self._assign_wire_routes()
+        self._error = ""
+        self.changed.emit()
+        self.schemeChanged.emit()
+
     def _set_error(self, message: str) -> None:
         self._error = message
         self.changed.emit()
@@ -1162,7 +1224,18 @@ class BooleanLogic(QObject):
             count = len(ordered)
             for index, wire in enumerate(ordered):
                 wire["sourceRouteIndex"] = index
-                wire["sourceOffset"] = 10 + (index + 1) * 80 / (count + 1)
+                source = nodes[wire["source"]]
+                if (
+                    source.get("style") == "schematic"
+                    and source["type"] in {"INPUT", "NOT"}
+                ):
+                    wire["sourceOffset"] = source["height"] / 2
+                else:
+                    margin = min(10, source["height"] / 4)
+                    usable_height = max(0, source["height"] - 2 * margin)
+                    wire["sourceOffset"] = (
+                        margin + (index + 1) * usable_height / (count + 1)
+                    )
 
         for connected_wires in target_wires.values():
             ordered = sorted(
@@ -1175,7 +1248,12 @@ class BooleanLogic(QObject):
             count = len(ordered)
             for index, wire in enumerate(ordered):
                 wire["targetRouteIndex"] = index
-                wire["targetOffset"] = 10 + (index + 1) * 80 / (count + 1)
+                target = nodes[wire["target"]]
+                margin = min(10, target["height"] / 4)
+                usable_height = max(0, target["height"] - 2 * margin)
+                wire["targetOffset"] = (
+                    margin + (index + 1) * usable_height / (count + 1)
+                )
 
         bottom_lane_index = 0
         bottom_edge = max(
@@ -1184,6 +1262,16 @@ class BooleanLogic(QObject):
         for wire in self._connections:
             wire.pop("wrapSide", None)
             wire.pop("wrapLaneY", None)
+            if wire.get("routeStyle") == "schematic":
+                bypass = nodes.get(wire.get("bypassNode", ""))
+                if bypass:
+                    wire["bypassRect"] = [
+                        bypass["x"], bypass["y"],
+                        bypass["width"], bypass["height"],
+                    ]
+                else:
+                    wire.pop("bypassRect", None)
+                continue
             source = nodes[wire["source"]]
             target = nodes[wire["target"]]
             route = _wire_route_points(wire, source, target)
@@ -1238,7 +1326,7 @@ class BooleanLogic(QObject):
             )
 
     def _build_scheme(self) -> None:
-        self._scheme_description = ""
+        self._scheme_kind = "FORMULA"
         outputs = [output for output in self._outputs if output["hasResult"]]
         total_terms = sum(
             len(output["cubes"])
@@ -1246,28 +1334,47 @@ class BooleanLogic(QObject):
             if output["cubes"]
             and not all(bit is None for bit in output["cubes"][0])
         )
-        self._scheme_height = max(
-            700,
-            120 * self._variable_count + 100,
-            130 * max(1, total_terms) + 100,
+        self._scheme_description = "; ".join(
+            f"{output['name']} = {output['source'] or output['sop']}"
+            for output in outputs
         )
-        self._scheme_width = 1020
+        self._scheme_height = max(
+            460,
+            105 * self._variable_count + 150,
+            78 * max(1, total_terms) + 180,
+        )
+        self._scheme_width = 1320
         self._nodes = []
         self._connections = []
         self._node_positions = {}
 
-        def add_node(node_id: str, label: str, kind: str, x: float, y: float) -> None:
-            node = {"id": node_id, "label": label, "type": kind, "x": x, "y": y,
-                    "width": 110, "height": 100, "maxInputs": 4}
+        def add_node(
+            node_id: str, label: str, kind: str, x: float, y: float,
+            width: float, height: float, max_inputs: int = 4,
+        ) -> None:
+            node = {
+                "id": node_id, "label": label, "type": kind,
+                "x": x, "y": y, "width": width, "height": height,
+                "maxInputs": max_inputs, "style": "schematic",
+            }
             self._nodes.append(node)
             self._node_positions[node_id] = (x, y)
 
-        def connect(source: str, target: str, source_offset: float, target_offset: float) -> None:
-            self._connections.append({
+        def connect(
+            source: str, target: str, source_offset: float, target_offset: float,
+            bus_x: float | None = None,
+            junction: bool = False,
+        ) -> None:
+            wire = {
                 "source": source, "target": target,
                 "sourceOffset": source_offset, "targetOffset": target_offset,
-                "color": _wire_color(source),
-            })
+                "color": _wire_color(source), "routeStyle": "schematic",
+            }
+            if bus_x is not None:
+                wire["busX"] = bus_x
+            if junction:
+                wire["junction"] = True
+            self._connections.append(wire)
 
         nonconstant_outputs = [
             output for output in outputs
@@ -1276,8 +1383,7 @@ class BooleanLogic(QObject):
         ]
         if nonconstant_outputs:
             variable_y = [
-                40 + index * (self._scheme_height - 180)
-                / max(1, self._variable_count - 1)
+                40 + index * 60
                 for index in range(self._variable_count)
             ]
         else:
@@ -1289,7 +1395,8 @@ class BooleanLogic(QObject):
         if all_cubes:
             for index, variable in enumerate(VARIABLES[:self._variable_count]):
                 add_node(
-                    f"var_{variable}", variable, "INPUT", 20, variable_y[index]
+                    f"var_{variable}", variable, "INPUT", 70,
+                    variable_y[index], 48, 28, 0,
                 )
 
         has_negations = {
@@ -1301,9 +1408,33 @@ class BooleanLogic(QObject):
         for index, variable in enumerate(VARIABLES[:self._variable_count]):
             if variable in has_negations:
                 add_node(
-                    f"not_{variable}", f"{variable}'", "NOT", 205, variable_y[index]
+                    f"not_{variable}", f"{variable}'", "NOT", 260,
+                    variable_y[index] - 4, 48, 36, 1,
                 )
-                connect(f"var_{variable}", f"not_{variable}", 50, 50)
+                connect(
+                    f"var_{variable}", f"not_{variable}", 14, 18
+                )
+
+        signal_sources = [
+            source_id
+            for variable in VARIABLES[:self._variable_count]
+            for source_id in (
+                [f"var_{variable}"]
+                + ([f"not_{variable}"] if variable in has_negations else [])
+            )
+        ]
+        signal_bus_x = {
+            source_id: (
+                160 + VARIABLES.index(source_id[4:]) * 8
+                if source_id.startswith("var_")
+                else 400 + VARIABLES.index(source_id[4:]) * 18
+            )
+            for source_id in signal_sources
+        }
+        gate_x = max(665, 500 + 20 * len(signal_sources))
+        or_x = gate_x + 300
+        output_x = or_x + 230
+        self._scheme_width = output_x + 130
 
         term_id = 0
         for output_index, output in enumerate(outputs):
@@ -1317,23 +1448,24 @@ class BooleanLogic(QObject):
             if not cubes:
                 constant_id = "constant" if output_name == "F" else f"constant_{output['id']}"
                 add_node(
-                    constant_id, f"{output_name} = 0", "CONSTANT", 820, output_y
+                    constant_id, f"{output_name} = 0", "CONSTANT",
+                    output_x, output_y, 64, 38, 0,
                 )
                 continue
             if len(cubes) == 1 and all(bit is None for bit in cubes[0]):
                 constant_id = "constant" if output_name == "F" else f"constant_{output['id']}"
                 add_node(
-                    constant_id, f"{output_name} = 1", "CONSTANT", 820, output_y
+                    constant_id, f"{output_name} = 1", "CONSTANT",
+                    output_x, output_y, 64, 38, 0,
                 )
                 continue
 
-            term_positions = []
+            term_positions: list[tuple[str, float]] = []
             for cube_index, cube in enumerate(cubes):
-                current_term_id = term_id
                 gate_id = f"and_term_{term_id}"
-                gate_y = 40 + term_id * 130
+                gate_y = 40 + self._variable_count * 60 + term_id * 78
                 term_id += 1
-                term_positions.append((current_term_id, gate_y))
+                term_positions.append((gate_id, gate_y + 24))
                 literals = [
                     (index, variable, bit)
                     for index, (variable, bit) in enumerate(
@@ -1341,35 +1473,64 @@ class BooleanLogic(QObject):
                     )
                     if bit is not None
                 ]
-                label = (
-                    f"AND  {output_name}" if len(cubes) == 1
-                    else f"AND {output_name} term {cube_index + 1}"
+                add_node(
+                    gate_id, f"{output_name} term {cube_index + 1}",
+                    "AND", gate_x, gate_y, 58, 48, max(1, len(literals)),
                 )
-                add_node(gate_id, label, "AND", 445, gate_y)
-                self._nodes[-1]["maxInputs"] = max(1, len(literals))
                 for literal_index, variable, value in literals:
                     source = f"var_{variable}" if value else f"not_{variable}"
                     target_offset = 10 + (
-                        len([item for item in literals if item[0] < literal_index]) + 1
-                    ) * (80 / (len(literals) + 1))
-                    connect(source, gate_id, 50, target_offset)
+                        sum(item[0] < literal_index for item in literals) + 1
+                    ) * (28 / (len(literals) + 1))
+                    source_offset = 14 if source.startswith("var_") else 18
+                    connect(
+                        source, gate_id, source_offset, target_offset,
+                        signal_bus_x[source],
+                        junction=True,
+                    )
 
             if len(term_positions) > 1:
                 output_gate_id = (
                     "or_output" if output_name == "F"
                     else f"or_{output['id']}"
                 )
-                output_gate_y = sum(y for _, y in term_positions) / len(term_positions)
-                add_node(output_gate_id, f"OR  {output_name}", "OR", 785, output_gate_y)
-                self._nodes[-1]["maxInputs"] = len(term_positions)
+                output_center = sum(y for _, y in term_positions) / len(term_positions)
+                output_height = max(54, 22 * len(term_positions))
+                add_node(
+                    output_gate_id, f"OR {output_name}", "OR",
+                    or_x, output_center - output_height / 2,
+                    94, output_height, len(term_positions),
+                )
                 for connection_index, (current_term_id, _) in enumerate(term_positions):
+                    term_node = next(
+                        node for node in self._nodes
+                        if node["id"] == current_term_id
+                    )
                     connect(
-                        f"and_term_{current_term_id}",
+                        current_term_id,
                         output_gate_id,
-                        50,
-                        15 + (connection_index + 1) * 70
+                        24,
+                        8 + (connection_index + 1)
+                        * (output_height - 16) / (len(term_positions) + 1),
+                        term_node["x"] + term_node["width"] + 40
+                        + (connection_index + 1) * 120
                         / (len(term_positions) + 1),
                     )
+                result_source = output_gate_id
+                result_y = output_center - 13
+            else:
+                result_source = term_positions[0][0]
+                result_y = term_positions[0][1] - 13
+
+            output_id = (
+                "output_F" if output_name == "F"
+                else f"output_{output['id']}"
+            )
+            add_node(
+                output_id, output_name, "OUTPUT", output_x,
+                result_y, 42, 26, 1,
+            )
+            connect(result_source, output_id, 24, 13)
 
     @Slot(str)
     def exportPdf(self, path: str) -> None:
@@ -1502,16 +1663,49 @@ class BooleanLogic(QObject):
             painter.setPen(QPen(QColor(wire["color"]), 2.5, Qt.SolidLine,
                                 Qt.RoundCap, Qt.RoundJoin))
             painter.drawPath(path_shape)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#17233b"))
+        for wire in self._connections:
+            if not wire.get("junction"):
+                continue
+            target = nodes_by_id[wire["target"]]
+            junction_y = target["y"] + wire["targetOffset"]
+            painter.drawEllipse(
+                wire["busX"] - 3, junction_y - 3, 6, 6
+            )
         for node in self._nodes:
             rect = (node["x"], node["y"], node["width"], node["height"])
-            painter.setPen(QPen(QColor("#315eaa"), 2))
-            painter.setBrush(QColor("#f2f6ff"))
-            painter.drawRoundedRect(*rect, 10, 10)
+            if node.get("style") != "schematic":
+                painter.setPen(QPen(QColor("#315eaa"), 2))
+                painter.setBrush(QColor("#f2f6ff"))
+                painter.drawRoundedRect(*rect, 10, 10)
             self._draw_gate(painter, node)
-            painter.setPen(QColor("#17233b"))
-            painter.setFont(QFont("Arial", 9, QFont.Bold))
-            painter.drawText(node["x"] + 4, node["y"] + 78, node["width"] - 8, 20,
-                             int(Qt.AlignCenter), node["label"])
+            if node.get("style") == "schematic":
+                painter.setPen(QColor("#17233b"))
+                painter.setFont(QFont("Arial", 9, QFont.Bold))
+                if node["type"] == "INPUT":
+                    label_rect = (node["x"] - 34, node["y"], 28, node["height"])
+                    alignment = int(Qt.AlignRight | Qt.AlignVCenter)
+                elif node["type"] == "NOT":
+                    label_rect = (
+                        node["x"] - 5, node["y"] + node["height"],
+                        node["width"] + 10, 18,
+                    )
+                    alignment = int(Qt.AlignCenter)
+                elif node["type"] == "OUTPUT":
+                    label_rect = (
+                        node["x"] + node["width"] + 5, node["y"],
+                        40, node["height"],
+                    )
+                    alignment = int(Qt.AlignLeft | Qt.AlignVCenter)
+                else:
+                    continue
+                painter.drawText(*label_rect, alignment, node["label"])
+            else:
+                painter.setPen(QColor("#17233b"))
+                painter.setFont(QFont("Arial", 9, QFont.Bold))
+                painter.drawText(node["x"] + 4, node["y"] + 78, node["width"] - 8, 20,
+                                 int(Qt.AlignCenter), node["label"])
         painter.restore()
         painter.end()
 
@@ -1526,17 +1720,123 @@ class BooleanLogic(QObject):
             wire_points.extend(_wire_route_points(wire, source, target))
         wire_x = [point[0] for point in wire_points]
         wire_y = [point[1] for point in wire_points]
+        label_bounds = []
+        for node in self._nodes:
+            if node.get("style") != "schematic":
+                continue
+            if node["type"] == "INPUT":
+                label_bounds.append((
+                    node["x"] - 34, node["y"],
+                    node["x"] - 6, node["y"] + node["height"],
+                ))
+            elif node["type"] == "NOT":
+                label_bounds.append((
+                    node["x"] - 5, node["y"] + node["height"],
+                    node["x"] + node["width"] + 5,
+                    node["y"] + node["height"] + 18,
+                ))
+            elif node["type"] == "OUTPUT":
+                label_bounds.append((
+                    node["x"] + node["width"] + 5, node["y"],
+                    node["x"] + node["width"] + 45,
+                    node["y"] + node["height"],
+                ))
+        label_x = [
+            coordinate for bounds in label_bounds
+            for coordinate in (bounds[0], bounds[2])
+        ]
+        label_y = [
+            coordinate for bounds in label_bounds
+            for coordinate in (bounds[1], bounds[3])
+        ]
         return (
-            min([node["x"] for node in self._nodes] + wire_x) - 4,
-            min([node["y"] for node in self._nodes] + wire_y) - 4,
-            max([node["x"] + node["width"] for node in self._nodes] + wire_x) + 4,
-            max([node["y"] + node["height"] for node in self._nodes] + wire_y) + 4,
+            min([node["x"] for node in self._nodes] + wire_x + label_x) - 4,
+            min([node["y"] for node in self._nodes] + wire_y + label_y) - 4,
+            max([node["x"] + node["width"] for node in self._nodes] + wire_x + label_x) + 4,
+            max([node["y"] + node["height"] for node in self._nodes] + wire_y + label_y) + 4,
         )
 
     def _draw_gate(self, painter: QPainter, node: dict[str, Any]) -> None:
         x, y = node["x"], node["y"]
         kind = node["type"]
         incoming = [wire for wire in self._connections if wire["target"] == node["id"]]
+        if node.get("style") == "schematic":
+            width, height = node["width"], node["height"]
+            center_y = y + height / 2
+            painter.setBrush(QColor("#ffffff"))
+            painter.setPen(QPen(QColor("#17233b"), 1.8))
+            for wire in incoming:
+                pin_y = y + wire["targetOffset"]
+                pin_end = (
+                    x + 20 if kind == "OR"
+                    else x + 8 if kind == "AND"
+                    else x + 4 if kind == "NOT"
+                    else x
+                )
+                painter.drawLine(x, pin_y, pin_end, pin_y)
+            for wire in self._connections:
+                if wire["source"] != node["id"]:
+                    continue
+                if kind == "INPUT":
+                    pin_start = x + 15
+                elif kind == "AND":
+                    pin_start = x + width - 16
+                elif kind == "OR":
+                    pin_start = x + width - 18
+                elif kind == "NOT":
+                    pin_start = x + width - 9
+                elif kind == "OUTPUT":
+                    pin_start = x + width - 8
+                else:
+                    pin_start = x + width - 8
+                pin_y = y + wire["sourceOffset"]
+                painter.drawLine(pin_start, pin_y, x + width, pin_y)
+
+            if kind == "INPUT":
+                painter.drawEllipse(x + 5, center_y - 4, 8, 8)
+                painter.drawLine(x + 13, center_y, x + width, center_y)
+            elif kind == "AND":
+                shape = QPainterPath()
+                shape.moveTo(x + 8, y + 4)
+                shape.lineTo(x + width - 16, y + 4)
+                shape.cubicTo(
+                    x + width + 2, y + 4,
+                    x + width + 2, y + height - 4,
+                    x + width - 16, y + height - 4,
+                )
+                shape.lineTo(x + 8, y + height - 4)
+                shape.closeSubpath()
+                painter.drawPath(shape)
+            elif kind == "OR":
+                shape = QPainterPath()
+                shape.moveTo(x + 20, y + 4)
+                shape.quadTo(x + 36, center_y, x + 20, y + height - 4)
+                shape.quadTo(x + width - 35, y + height - 4,
+                             x + width - 18, center_y)
+                shape.quadTo(x + width - 35, y + 4, x + 20, y + 4)
+                shape.closeSubpath()
+                painter.drawPath(shape)
+            elif kind == "NOT":
+                shape = QPainterPath()
+                shape.moveTo(x + 4, y + 4)
+                shape.lineTo(x + width - 16, center_y)
+                shape.lineTo(x + 4, y + height - 4)
+                shape.closeSubpath()
+                painter.drawPath(shape)
+                painter.drawEllipse(x + width - 12, center_y - 3.5, 7, 7)
+            elif kind == "OUTPUT":
+                painter.drawLine(x, center_y, x + width - 8, center_y)
+                painter.drawEllipse(x + width - 9, center_y - 4, 8, 8)
+            elif kind == "CONSTANT":
+                painter.drawRoundedRect(
+                    x + 5, y + 4, width - 10, height - 8, 4, 4
+                )
+                painter.setFont(QFont("Arial", 10, QFont.Bold))
+                painter.drawText(
+                    x, y, width, height, int(Qt.AlignCenter), node["label"]
+                )
+            return
+
         if kind in {"AND", "OR", "NOT", "OUTPUT"}:
             for wire in incoming:
                 pin_y = y + wire["targetOffset"]
